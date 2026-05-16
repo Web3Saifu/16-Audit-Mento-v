@@ -5,28 +5,28 @@ pragma solidity 0.8.24;
 import "./Dependencies/Ownable.sol";
 import "./Interfaces/IAddressesRegistry.sol";
 
-contract AddressesRegistry is Ownable, IAddressesRegistry {
-    IERC20Metadata public collToken;
-    IBorrowerOperations public borrowerOperations;
-    ITroveManager public troveManager;
-    ITroveNFT public troveNFT;
-    IMetadataNFT public metadataNFT;
-    IStabilityPool public stabilityPool;
-    IPriceFeed public priceFeed;
-    IActivePool public activePool;
-    IDefaultPool public defaultPool;
-    address public gasPoolAddress;
-    ICollSurplusPool public collSurplusPool;
-    ISortedTroves public sortedTroves;
-    IInterestRouter public interestRouter;
-    IHintHelpers public hintHelpers;
-    IMultiTroveGetter public multiTroveGetter;
-    ICollateralRegistry public collateralRegistry;
-    IBoldToken public boldToken;
-    IERC20Metadata public gasToken;
-    address public liquidityStrategy;
+contract AddressesRegistry is Ownable, IAddressesRegistry {  //এই contract = Protocol Address Directory   “কোন feature কোন contract-এ আছে” — সেই mapping এখানে রাখা
+    IERC20Metadata public collToken;  “Loan নেওয়ার জন্য user যেটা lock করে”
+    IBorrowerOperations public borrowerOperations; ///👉 Loan open/close controller
+    ITroveManager public troveManager; //👉 Core accounting brain
+    ITroveNFT public troveNFT;  //👉 Loan ownership NFT 
+    IMetadataNFT public metadataNFT;  //👉 NFT metadata handler
+    IStabilityPool public stabilityPool;  //👉 Liquidation absorption pool
+    IPriceFeed public priceFeed;//“Market price truth source”
+    IActivePool public activePool;//👉 Active system funds  ,,“Currently active loans money bucket”  active loans-এর collateral + debt track করে
+    IDefaultPool public defaultPool;//👉 Defaulted debt storage    liquidated bad debt temporarily hold করে  redistribution system use করে
+    address public gasPoolAddress; //internal protocol gas handling
+    ICollSurplusPool public collSurplusPool;///👉 Extra collateral storage  liquidation এর পরে leftover collateral  user claim করতে পারে
+    ISortedTroves public sortedTroves;//“Leaderboard of loans (safest → riskiest)”  👉 Ordered loan list
+    IInterestRouter public interestRouter;//👉 Interest distribution logic
+    IHintHelpers public hintHelpers;//👉 Gas optimization helper
+    IMultiTroveGetter public multiTroveGetter;//👉 Batch data reader
+    ICollateralRegistry public collateralRegistry;//👉 Allowed collateral manager
+    IBoldToken public boldToken;//👉 Protocol stable debt token
+    IERC20Metadata public gasToken; // 👉 Gas payment token
+    address public liquidityStrategy;//👉 Yield / liquidity optimizer  “Money earning strategy module”
 
-    event CollTokenAddressChanged(address _collTokenAddress);
+    event CollTokenAddressCh“Money earning strategy module”anged(address _collTokenAddress);
     event BorrowerOperationsAddressChanged(address _borrowerOperationsAddress);
     event TroveManagerAddressChanged(address _troveManagerAddress);
     event TroveNFTAddressChanged(address _troveNFTAddress);

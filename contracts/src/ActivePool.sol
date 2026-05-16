@@ -1,135 +1,240 @@
 // SPDX-License-Identifier: BUSL-1.1
 
-pragma solidity 0.8.24;
+pragma solidity 0.8.24; // solidity compiler version
 
-import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
-import "openzeppelin-contracts/contracts/utils/math/Math.sol";
+// ===== OpenZeppelin Libraries =====
 
-import "./Dependencies/Constants.sol";
-import "./Interfaces/IActivePool.sol";
-import "./Interfaces/IAddressesRegistry.sol";
-import "./Interfaces/IBoldToken.sol";
-import "./Interfaces/IInterestRouter.sol";
-import "./Interfaces/IDefaultPool.sol";
-import "./Interfaces/ISystemParams.sol";
+import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol"; 
+// safer ERC20 operations
+// handles non-standard ERC20s safely
+// adds:
+// - safeTransfer()
+// - safeTransferFrom()
+// - safeApprove()
+
+import "openzeppelin-contracts/contracts/utils/math/Math.sol"; 
+// math utility library
+// used here mainly for:
+// - ceilDiv()
+// normal division rounds down
+// ceilDiv rounds UP
+
+// ===== Internal Dependencies =====
+
+import "./Dependencies/Constants.sol"; 
+// global protocol constants
+// ex:
+// - DECIMAL_PRECISION
+// - ONE_YEAR
+
+import "./Interfaces/IActivePool.sol"; 
+// ActivePool interface
+
+import "./Interfaces/IAddressesRegistry.sol"; 
+// registry storing protocol addresses
+// helps avoid hardcoding addresses
+
+import "./Interfaces/IBoldToken.sol"; 
+// BOLD token interface
+// BOLD = protocol debt token
+
+import "./Interfaces/IInterestRouter.sol"; 
+// LP reward router interface
+// routes protocol yield to liquidity providers
+
+import "./Interfaces/IDefaultPool.sol"; 
+// DefaultPool interface
+// receives redistributed collateral/debt
+
+import "./Interfaces/ISystemParams.sol"; 
+// protocol configuration interface
+// stores:
+// - CCR
+// - MCR
+// - fees
+// - yield split
+// etc.
 
 /*
- * The Active Pool holds the collateral and Bold debt (but not Bold tokens) for all active troves.
+ * ActivePool = main collateral vault
  *
- * When a trove is liquidated, it's Coll and Bold debt are transferred from the Active Pool, to either the
- * Stability Pool, the Default Pool, or both, depending on the liquidation conditions.
+ * Responsibilities:
+ * - holds collateral tokens
+ * - tracks aggregate system debt
+ * - handles collateral movement
+ * - mints aggregate interest
  *
+ * Interacts with:
+ * - BorrowerOperations
+ * - TroveManager  The central accounting + liquidation engine
+ * - StabilityPool
+ * - DefaultPool
  */
+
 contract ActivePool is IActivePool {
-    using SafeERC20 for IERC20;
+    using SafeERC20 for IERC20; 
+    // extends IERC20 with safe functions
 
-    string public constant NAME = "ActivePool";
+    string public constant NAME = "ActivePool"; 
+    // contract identifier
 
-    IERC20 public immutable collToken;
-    address public immutable borrowerOperationsAddress;
-    address public immutable troveManagerAddress;
-    address public immutable defaultPoolAddress;
+    IERC20 public immutable collToken; 
+    // collateral token ex: cUSD
 
-    ISystemParams public immutable systemParams;
-    IBoldToken public immutable boldToken;
+    address public immutable borrowerOperationsAddress; 
+    // BorrowerOperations contract
+    // user borrow/repay entry point
 
-    IInterestRouter public immutable interestRouter;
-    IBoldRewardsReceiver public immutable stabilityPool;
+    address public immutable troveManagerAddress; 
+    // liquidation/redemption manager
 
-    uint256 internal collBalance; // deposited coll tracker
+    address public immutable defaultPoolAddress; 
+    // redistribution pool
 
-    // Aggregate recorded debt tracker. Updated whenever a Trove's debt is touched AND whenever the aggregate pending interest is minted.
-    // "D" in the spec.
-    uint256 public aggRecordedDebt;
+    ISystemParams public immutable systemParams; 
+    // protocol parameters storage
 
-    /* Sum of individual recorded Trove debts weighted by their respective chosen interest rates.
-    * Updated at individual Trove operations.
-    * "S" in the spec.
-    */
-    uint256 public aggWeightedDebtSum;
+    IBoldToken public immutable boldToken; 
+    // protocol debt token
 
-    // Last time at which the aggregate recorded debt and weighted sum were updated
-    uint256 public lastAggUpdateTime;
+    IInterestRouter public immutable interestRouter; 
+    // distributes LP rewards/yield
 
-    // Timestamp at which branch was shut down. 0 if not shut down.
-    uint256 public shutdownTime;
+    IBoldRewardsReceiver public immutable stabilityPool; 
+    // StabilityPool reward receiver
 
-    // Aggregate batch fees tracker
-    uint256 public aggBatchManagementFees;
-    /* Sum of individual recorded Trove debts weighted by their respective batch management fees
-     * Updated at individual batched Trove operations.
-     */
-    uint256 public aggWeightedBatchManagementFeeSum;
-    // Last time at which the aggregate batch fees and weighted sum were updated
-    uint256 public lastAggBatchManagementFeesUpdateTime;
+    uint256 internal collBalance;
+    // internally tracked collateral amount
+    // NOT raw token balance
 
-    // --- Events ---
+    uint256 public aggRecordedDebt; 
+    // total recorded system debt
 
-    event CollTokenAddressChanged(address _newCollTokenAddress);
-    event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress);
-    event TroveManagerAddressChanged(address _newTroveManagerAddress);
-    event DefaultPoolAddressChanged(address _newDefaultPoolAddress);
-    event StabilityPoolAddressChanged(address _newStabilityPoolAddress);
-    event ActivePoolBoldDebtUpdated(uint256 _recordedDebtSum);
-    event ActivePoolCollBalanceUpdated(uint256 _collBalance);
+    uint256 public aggWeightedDebtSum;// সব user debt × interest rate এর total sum
+    // total weighted debt
+    // formula:
+    // debt * interestRate
 
-    constructor(IAddressesRegistry _addressesRegistry, ISystemParams _systemParams) {
-        systemParams = _systemParams;
-        collToken = _addressesRegistry.collToken();
-        borrowerOperationsAddress = address(_addressesRegistry.borrowerOperations());
-        troveManagerAddress = address(_addressesRegistry.troveManager());
-        stabilityPool = IBoldRewardsReceiver(_addressesRegistry.stabilityPool());
-        defaultPoolAddress = address(_addressesRegistry.defaultPool());
-        interestRouter = _addressesRegistry.interestRouter();
-        boldToken = _addressesRegistry.boldToken();
+    uint256 public lastAggUpdateTime; 
+    // last aggregate interest update
 
-        emit CollTokenAddressChanged(address(collToken));
-        emit BorrowerOperationsAddressChanged(borrowerOperationsAddress);
-        emit TroveManagerAddressChanged(troveManagerAddress);
-        emit StabilityPoolAddressChanged(address(stabilityPool));
-        emit DefaultPoolAddressChanged(defaultPoolAddress);
+    uint256 public shutdownTime; 
+    // 0 = active
+    // non-zero = shutdown
 
-        // Allow funds movements between Liquity contracts
-        collToken.approve(defaultPoolAddress, type(uint256).max);
+    uint256 public aggBatchManagementFees; 
+    // total batch management fees
+
+    uint256 public aggWeightedBatchManagementFeeSum; 
+    // weighted batch fee sum   aggWeightedDebtSum
+    // formula:
+    // debt * batchFeeRate 
+
+    uint256 public lastAggBatchManagementFeesUpdateTime; 
+    // last batch fee update time
+
+    // ===== Constructor =====
+
+    constructor(
+        IAddressesRegistry _addressesRegistry,
+        ISystemParams _systemParams
+    ) {
+        systemParams = _systemParams; 
+        // save params contract
+
+        collToken = _addressesRegistry.collToken();//
+        // fetch collateral token from registry
+
+        borrowerOperationsAddress =
+            address(_addressesRegistry.borrowerOperations()); 
+        // fetch BO address
+
+        troveManagerAddress =
+            address(_addressesRegistry.troveManager()); 
+        // fetch TroveManager address
+
+        stabilityPool =
+            IBoldRewardsReceiver(
+                _addressesRegistry.stabilityPool()
+            ); 
+        // fetch StabilityPool
+
+        defaultPoolAddress =
+            address(_addressesRegistry.defaultPool()); 
+        // fetch DefaultPool address
+
+        interestRouter =
+            _addressesRegistry.interestRouter(); 
+        // fetch LP reward router
+
+        boldToken =
+            _addressesRegistry.boldToken(); 
+        // fetch BOLD token
+
+        emit CollTokenAddressChanged(//
+            address(collToken)
+        ); 
+        // emit collateral config event
+
+        emit BorrowerOperationsAddressChanged(
+            borrowerOperationsAddress
+        ); 
+        // emit BO config event
+
+        emit TroveManagerAddressChanged(
+            troveManagerAddress
+        ); 
+        // emit TM config event
+
+        emit StabilityPoolAddressChanged(
+            address(stabilityPool)
+        ); 
+        // emit SP config event
+
+        emit DefaultPoolAddressChanged(
+            defaultPoolAddress
+        ); 
+        // emit DP config event
+
+        collToken.approve(
+            defaultPoolAddress,
+            type(uint256).max
+        ); 
+        // infinite approve to DefaultPool
+        // allows DefaultPool to pull collateral
+        // during liquidation redistribution
     }
+} 
 
     // --- Getters for public variables. Required by IPool interface ---
 
-    /*
-    * Returns the Coll state variable.
-    *
-    *Not necessarily equal to the contract's raw Coll balance - ether can be forcibly sent to contracts.
-    */
-    function getCollBalance() external view override returns (uint256) {
+   
+    function getCollBalance() external view override returns (uint256) {//protocol internally যত collateral believe করে তার amount
         return collBalance;
     }
 
-    function calcPendingAggInterest() public view returns (uint256) {
+    function calcPendingAggInterest() public view returns (uint256) {//“শেষ update-এর পর এখন পর্যন্ত system-এ কত interest জমেছে কিন্তু এখনও officially mint/account করা হয়নি?”
         if (shutdownTime != 0) return 0;
 
-        // We use the ceiling of the division here to ensure positive error, while we use regular floor division
-        // when calculating the interest accrued by individual Troves.
-        // This ensures that `system debt >= sum(trove debt)` always holds, and thus system debt won't turn negative
-        // even if all Trove debt is repaid. The difference should be small and it should scale with the number of
-        // interest minting events.
-        return Math.ceilDiv(aggWeightedDebtSum * (block.timestamp - lastAggUpdateTime), ONE_YEAR * DECIMAL_PRECISION);
+        return Math.ceilDiv(aggWeightedDebtSum * (block.timestamp - lastAggUpdateTime), ONE_YEAR * DECIMAL_PRECISION);//শেষ update এর পর এখন পর্যন্ত accrued (জমা হওয়া) system interest
     }
 
-    function calcPendingSPYield() external view returns (uint256) {
-        return calcPendingAggInterest() * systemParams.SP_YIELD_SPLIT() / DECIMAL_PRECISION;
-    }
+    function calcPendingSPYield() external view returns (uint256) {//pending system interest-এর একটা অংশ Stability Pool (SP)-এ দিচ্ছে
+        return calcPendingAggInterest() * systemParams.SP_YIELD_SPLIT() / DECIMAL_PRECISION;//(B) systemParams.SP_YIELD_SPLIT()  SP কত % interest পাবে   50% = 0.5 (বা 0.5e18)
+    }//(A) calcPendingAggInterest()  পুরো system-এর এখন পর্যন্ত accrued interest
 
-    function calcPendingAggBatchManagementFee() public view returns (uint256) {
-        uint256 periodEnd = shutdownTime != 0 ? shutdownTime : block.timestamp;
-        uint256 periodStart = Math.min(lastAggBatchManagementFeesUpdateTime, periodEnd);
+    function calcPendingAggBatchManagementFee() public view returns (uint256) {//batch managers-এর accrued management fee এখন পর্যন্ত কত জমেছে সেটা calculate করছে
+        uint256 periodEnd = shutdownTime != 0 ? shutdownTime : block.timestamp;//0 = default /  এখনও shutdown হয়নি (active)
+        uint256 periodStart = Math.min(lastAggBatchManagementFeesUpdateTime, periodEnd);//fee calculation কখন থেকে শুরু হবে সেটা ঠিক করা হচ্ছে
 
-        return Math.ceilDiv(aggWeightedBatchManagementFeeSum * (periodEnd - periodStart), ONE_YEAR * DECIMAL_PRECISION);
-    }
+        return Math.ceilDiv(aggWeightedBatchManagementFeeSum * (periodEnd - periodStart), ONE_YEAR * DECIMAL_PRECISION);//How much batch management fee has accumulated over a time period. // WeightedFeeSum = 100 Time passed = 0.5 year ,,Fee = 100 × 0.5 = 50 50.0001 → becomes 51 (because of ceilDiv)
+    }//aggWeightedBatchManagementFeeSum Total system “fee power” = sum of (debt × fee rate weighting)
+
 
     function getNewApproxAvgInterestRateFromTroveChange(TroveChange calldata _troveChange)
         external
         view
-        returns (uint256)
+        returns (uint256)//“After this Trove change happens,what will the new approximate average system interest rate become?”
     {
         // We are ignoring the upfront fee when calculating the approx. avg. interest rate.
         // This is a simple way to resolve the circularity in:
@@ -345,4 +450,4 @@ contract ActivePool is IActivePool {
     function _requireCallerIsTroveManager() internal view {
         require(msg.sender == troveManagerAddress, "ActivePool: Caller is not TroveManager");
     }
-}
+

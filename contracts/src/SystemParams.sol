@@ -11,20 +11,31 @@ import {
 } from "./Dependencies/Constants.sol";
 import "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 
+/*
+the entire protocol economic rules
+minimum debt
+liquidation penalties
+collateral ratios
+interest constraints
+redemption configs
+SP configs*/
+
+
+
 /**
  * @title System Parameters
  * @author Mento Labs
  * @notice This contract manages the system-wide parameters for the protocol.
  */
-contract SystemParams is ISystemParams, Initializable {
+contract SystemParams is ISystemParams, Initializable {// protocol configuration storage + validation layer
     /* ========== DEBT PARAMETERS ========== */
 
     uint256 public immutable MIN_DEBT;
 
     /* ========== LIQUIDATION PARAMETERS ========== */
 
-    uint256 public immutable LIQUIDATION_PENALTY_SP;
-    uint256 public immutable LIQUIDATION_PENALTY_REDISTRIBUTION;
+    uint256 public immutable LIQUIDATION_PENALTY_SP;//Suppose penalty = 10%. system had to rescue it     Used when:StabilityPool covers debt
+    uint256 public immutable LIQUIDATION_PENALTY_REDISTRIBUTION;//But different liquidation mode.      Used when: other borrowers absorb Alice debt
 
     /* ========== GAS COMPENSATION PARAMETERS ========== */
 
@@ -34,8 +45,8 @@ contract SystemParams is ISystemParams, Initializable {
 
     /* ========== COLLATERAL PARAMETERS ========== */
 
-    uint256 public immutable CCR;
-    uint256 public immutable SCR;
+    uint256 public immutable CCR;//CCR triggers Recovery Mode
+    uint256 public immutable SCR; // “Don’t borrow too aggressively.”    So even if liquidation starts at 110%,   opening may require 120%.
     uint256 public immutable MCR;
     uint256 public immutable BCR;
 
@@ -52,7 +63,7 @@ contract SystemParams is ISystemParams, Initializable {
 
     /* ========== STABILITY POOL PARAMETERS ========== */
 
-    uint256 public immutable SP_YIELD_SPLIT;
+    uint256 public immutable SP_YIELD_SPLIT;//governance can mutate it anytime
     uint256 public immutable MIN_BOLD_IN_SP;
     uint256 public immutable MIN_BOLD_AFTER_REBALANCE;
 

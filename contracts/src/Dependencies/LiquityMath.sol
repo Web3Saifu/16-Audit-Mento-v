@@ -5,16 +5,16 @@ pragma solidity 0.8.24;
 import {DECIMAL_PRECISION} from "./Constants.sol";
 
 library LiquityMath {
-    function _min(uint256 _a, uint256 _b) internal pure returns (uint256) {
-        return (_a < _b) ? _a : _b;
+    function _min(uint256 _a, uint256 _b) internal pure returns (uint256) {//return the smaller value  
+        return (_a < _b) ? _a : _b;// if a < b → return a  else → return b
     }
 
-    function _max(uint256 _a, uint256 _b) internal pure returns (uint256) {
+    function _max(uint256 _a, uint256 _b) internal pure returns (uint256) {//return larger value
         return (_a >= _b) ? _a : _b;
     }
 
     function _sub_min_0(uint256 _a, uint256 _b) internal pure returns (uint256) {
-        return (_a > _b) ? _a - _b : 0;
+        return (_a > _b) ? _a - _b : 0;//safe subtraction with floor at 0
     }
 
     /* 
@@ -27,7 +27,7 @@ library LiquityMath {
     function decMul(uint256 x, uint256 y) internal pure returns (uint256 decProd) {
         uint256 prod_xy = x * y;
 
-        decProd = (prod_xy + DECIMAL_PRECISION / 2) / DECIMAL_PRECISION;
+        decProd = (prod_xy + DECIMAL_PRECISION / 2) / DECIMAL_PRECISION;//7 / 2,,3.5,,3,,      If we want:3.5 → 4,,(7 + 1) / 2 ,,= 8 / 2 ,,= 4
     }
 
     /* 
@@ -46,7 +46,7 @@ library LiquityMath {
     * In function 1), the decayed base rate will be 0 for 1000 years or > 1000 years
     * In function 2), the difference in tokens issued at 1000 years and any time > 1000 years, will be negligible
     */
-    function _decPow(uint256 _base, uint256 _minutes) internal pure returns (uint256) {
+    function _decPow(uint256 _base, uint256 _minutes) internal pure returns (uint256) {//“efficiently calculate how a value decays or compounds over time.”
         if (_minutes > 525600000) _minutes = 525600000; // cap to avoid overflow
 
         if (_minutes == 0) return DECIMAL_PRECISION;
@@ -72,12 +72,12 @@ library LiquityMath {
     }
 
     function _getAbsoluteDifference(uint256 _a, uint256 _b) internal pure returns (uint256) {
-        return (_a >= _b) ? _a - _b : _b - _a;
+        return (_a >= _b) ? _a - _b : _b - _a;//“Give me the gap between two values, always positive.”
     }
 
-    function _computeCR(uint256 _coll, uint256 _debt, uint256 _price) internal pure returns (uint256) {
+    function _computeCR(uint256 _coll, uint256 _debt, uint256 _price) internal pure returns (uint256) {//“How much collateral backs the debt?”
         if (_debt > 0) {
-            uint256 newCollRatio = _coll * _price / _debt;
+            uint256 newCollRatio = _coll * _price / _debt;//2 * 1000 = 2000 ,,2000 / 1000 = 2,,200%
 
             return newCollRatio;
         }
