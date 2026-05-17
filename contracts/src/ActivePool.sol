@@ -213,10 +213,10 @@ contract ActivePool is IActivePool {
         return collBalance;
     }
 
-    function calcPendingAggInterest() public view returns (uint256) {//“শেষ update-এর পর এখন পর্যন্ত system-এ কত interest জমেছে কিন্তু এখনও officially mint/account করা হয়নি?”
+    function calcPendingAggInterest() public view returns (uint256) { //“system কত debt + interest weight ধরে রেখেছে × কত সময় গেছে”  //“শেষ update-এর পর এখন পর্যন্ত system-এ কত interest জমেছে কিন্তু এখনও officially mint/account করা হয়নি?”
         if (shutdownTime != 0) return 0;
 
-        return Math.ceilDiv(aggWeightedDebtSum * (block.timestamp - lastAggUpdateTime), ONE_YEAR * DECIMAL_PRECISION);//শেষ update এর পর এখন পর্যন্ত accrued (জমা হওয়া) system interest
+        return Math.ceilDiv(aggWeightedDebtSum * (block.timestamp - lastAggUpdateTime), ONE_YEAR * DECIMAL_PRECISION);//শেষ update এর পর এখন পর্যন্ত accrued (জমা হওয়া) system interest  //“system কত debt + interest weight ধরে রেখেছে × কত সময় গেছে”
     }
 
     function calcPendingSPYield() external view returns (uint256) {//pending system interest-এর একটা অংশ Stability Pool (SP)-এ দিচ্ছে

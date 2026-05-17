@@ -2,8 +2,8 @@
 
 pragma solidity 0.8.24;
 
-import {ISystemParams} from "./Interfaces/ISystemParams.sol";
-import {
+import {ISystemParams} from "./Interfaces/ISystemParams.sol";//ISystemParams.sol file থেকে ISystemParams import করো
+import {//constants import করো
     _100pct,
     _1pct,
     MAX_LIQUIDATION_PENALTY_REDISTRIBUTION,
@@ -39,40 +39,40 @@ contract SystemParams is ISystemParams, Initializable {// protocol configuration
 
     /* ========== GAS COMPENSATION PARAMETERS ========== */
 
-    uint256 public immutable COLL_GAS_COMPENSATION_DIVISOR;
-    uint256 public immutable COLL_GAS_COMPENSATION_CAP;
-    uint256 public immutable ETH_GAS_COMPENSATION;
+    uint256 public immutable COLL_GAS_COMPENSATION_DIVISOR;//Someone must press liquidation transaction. That person pays gas fee.    So protocol rewards them.
+    uint256 public immutable COLL_GAS_COMPENSATION_CAP; //What if Alice had HUGE collateral? Then liquidator reward becomes too huge.   So protocol sets max limit.
+    uint256 public immutable ETH_GAS_COMPENSATION;  //  Protocol also gives fixed ETH reward.   0.01 ETH    Even if collateral reward small,    liquidator still earns fixed ETH. 
 
     /* ========== COLLATERAL PARAMETERS ========== */
 
-    uint256 public immutable CCR;//CCR triggers Recovery Mode
-    uint256 public immutable SCR; // “Don’t borrow too aggressively.”    So even if liquidation starts at 110%,   opening may require 120%.
-    uint256 public immutable MCR;
-    uint256 public immutable BCR;
+    uint256 public immutable CCR;//CCR triggers Recovery Mode   CCR = protocol emergency alarm   This is about WHOLE protocol.  Critical Collateral Ratio
+    uint256 public immutable SCR; //   This is another safety threshold. Protocol wants extra safety before danger happens.”  “Don’t borrow too aggressively.”    So even if liquidation starts at 110%,   opening may require 120%.  Secondary Collateral Ratio
+    uint256 public immutable MCR;  //“Below this ratio → liquidation starts”   105% < 110%   Minimum Collateral Ratio
+    uint256 public immutable BCR;  //liquidation happens at 110%    but opening loan may require 120%       Borrowing Collateral Ratio
 
     /* ========== INTEREST PARAMETERS ========== */
 
-    uint256 public immutable MIN_ANNUAL_INTEREST_RATE;
+    uint256 public immutable MIN_ANNUAL_INTEREST_RATE; //Protocol charges interest on loans.
 
     /* ========== REDEMPTION PARAMETERS ========== */
 
-    uint256 public immutable REDEMPTION_FEE_FLOOR;
-    uint256 public immutable INITIAL_BASE_RATE;
-    uint256 public immutable REDEMPTION_MINUTE_DECAY_FACTOR;
-    uint256 public immutable REDEMPTION_BETA;
+    uint256 public immutable REDEMPTION_FEE_FLOOR; // Protocol charges fee.
+    uint256 public immutable INITIAL_BASE_RATE;  //Starting redemption fee level.
+    uint256 public immutable REDEMPTION_MINUTE_DECAY_FACTOR;  //Redemption fee slowly decreases over time.    Market calm    Fee slowly cools down
+    uint256 public immutable REDEMPTION_BETA;  //how aggressively redemption fee changes
 
     /* ========== STABILITY POOL PARAMETERS ========== */
 
-    uint256 public immutable SP_YIELD_SPLIT;//governance can mutate it anytime
-    uint256 public immutable MIN_BOLD_IN_SP;
-    uint256 public immutable MIN_BOLD_AFTER_REBALANCE;
+    uint256 public immutable SP_YIELD_SPLIT;//governance can mutate it anytime   কত StabilityPool users পাবে  কত অন্য জায়গায় যাবে  
+    uint256 public immutable MIN_BOLD_IN_SP; // “Stability Pool must always have minimum liquidity.”
+    uint256 public immutable MIN_BOLD_AFTER_REBALANCE;  //“After rebalance, do we still have enough BOLD inside SP?”
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(
+    constructor(  //they group related configs together.
         bool disableInitializers,
-        DebtParams memory _debtParams,
-        LiquidationParams memory _liquidationParams,
+        DebtParams memory _debtParams,//debt-related settings package
+        LiquidationParams memory _liquidationParams,  
         GasCompParams memory _gasCompParams,
         CollateralParams memory _collateralParams,
         InterestParams memory _interestParams,
@@ -88,46 +88,46 @@ contract SystemParams is ISystemParams, Initializable {// protocol configuration
 
         // Validate liquidation parameters
         // Hardcoded validation bounds: MIN_LIQUIDATION_PENALTY_SP = 5%
-        if (_liquidationParams.liquidationPenaltySP < 5 * _1pct) {
+        if (_liquidationParams.liquidationPenaltySP < 5 * _1pct) {//“Liquidation penalty cannot be too small.”
             revert SPPenaltyTooLow();
         }
-        if (_liquidationParams.liquidationPenaltySP > _liquidationParams.liquidationPenaltyRedistribution) {
+        if (_liquidationParams.liquidationPenaltySP > _liquidationParams.liquidationPenaltyRedistribution) {//“SP liquidation should NOT be harsher than redistribution.”
             revert SPPenaltyGtRedist();
         }
 
         // Validate gas compensation parameters
-        if (_gasCompParams.collGasCompensationDivisor == 0 || _gasCompParams.collGasCompensationDivisor > 1000) {
+        if (_gasCompParams.collGasCompensationDivisor == 0 || _gasCompParams.collGasCompensationDivisor > 1000) { //🔥 division by zero crash.
             revert InvalidGasCompensation();
         }
-        if (_gasCompParams.collGasCompensationCap == 0 || _gasCompParams.collGasCompensationCap > 10 ether) {
+        if (_gasCompParams.collGasCompensationCap == 0 || _gasCompParams.collGasCompensationCap > 10 ether) {//if (cap == 0 || cap > 10 ether)    reward cap cannot be absurdly huge
             revert InvalidGasCompensation();
         }
-        if (_gasCompParams.ethGasCompensation == 0 || _gasCompParams.ethGasCompensation > 1 ether) {
+        if (_gasCompParams.ethGasCompensation == 0 || _gasCompParams.ethGasCompensation > 1 ether) {// if (ethGasCompensation == 0 || > 1 ether)   cannot be crazy large
             revert InvalidGasCompensation();
         }
 
         // Validate collateral parameters
-        if (_collateralParams.ccr <= _100pct || _collateralParams.ccr >= 2 * _100pct) revert InvalidCCR();
-        if (_collateralParams.mcr <= _100pct || _collateralParams.mcr >= 2 * _100pct) revert InvalidMCR();
-        if (_collateralParams.bcr < 5 * _1pct || _collateralParams.bcr >= 50 * _1pct) revert InvalidBCR();
-        if (_collateralParams.scr <= _100pct || _collateralParams.scr >= 2 * _100pct) revert InvalidSCR();
+        if (_collateralParams.ccr <= _100pct || _collateralParams.ccr >= 2 * _100pct) revert InvalidCCR();//“CCR must stay in reasonable range.”  if (ccr <= 100% || ccr >= 200%)   “CCR must stay between 100% and 200%”
+        if (_collateralParams.mcr <= _100pct || _collateralParams.mcr >= 2 * _100pct) revert InvalidMCR();  CCR = emergency mode trigger.
+        if (_collateralParams.bcr < 5 * _1pct || _collateralParams.bcr >= 50 * _1pct) revert InvalidBCR();   BCR = borrowing safety buffer.  Users can borrow too aggressively. BCR = 1%     Too huge.   BCR = 90%
+        if (_collateralParams.scr <= _100pct || _collateralParams.scr >= 2 * _100pct) revert InvalidSCR();   SCR is another safety threshold.   if (scr <= 100% || scr >= 200%)
 
         // The redistribution penalty must not exceed the overcollateralization buffer (MCR - 100%)
         if (
-            _liquidationParams.liquidationPenaltyRedistribution > MAX_LIQUIDATION_PENALTY_REDISTRIBUTION
-                || _liquidationParams.liquidationPenaltyRedistribution > _collateralParams.mcr - _100pct
+            _liquidationParams.liquidationPenaltyRedistribution > MAX_LIQUIDATION_PENALTY_REDISTRIBUTION// redistribution penalty = 20%  But Alice only has: 10% extra collateral  🔥 impossible.
+                || _liquidationParams.liquidationPenaltyRedistribution > _collateralParams.mcr - _100pct//Penalty must stay <= extra buffer otherwise revert   liquidate হলে borrower থেকে extra collateral কেটে নেওয়া হয়   //mcr - 100% কী?   110%−100%=10%
         ) {
             revert RedistPenaltyTooHigh();
         }
 
         // Validate interest parameters
-        if (_interestParams.minAnnualInterestRate > MAX_ANNUAL_INTEREST_RATE) {
+        if (_interestParams.minAnnualInterestRate > MAX_ANNUAL_INTEREST_RATE) {//“minimum interest rate খুব বেশি হয়ে গেলে reject”
             revert MinInterestRateGtMax();
         }
 
         // Validate redemption parameters
-        if (_redemptionParams.redemptionFeeFloor > _100pct) revert InvalidFeeValue();
-        if (_redemptionParams.initialBaseRate > 10 * _100pct) revert InvalidFeeValue();
+        if (_redemptionParams.redemptionFeeFloor > _100pct) revert InvalidFeeValue();  //fee 100% এর বেশি হতে পারবে না   If redeeming 100 BOLD:fee = 120 BOLD ❌ impossible
+        if (_redemptionParams.initialBaseRate > 10 * _100pct) revert InvalidFeeValue();//starting fee too high হলে reject
 
         // Validate stability pool parameters
         if (_poolParams.spYieldSplit > _100pct) revert InvalidFeeValue();
