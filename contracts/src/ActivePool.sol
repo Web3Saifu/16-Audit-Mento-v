@@ -113,7 +113,7 @@ contract ActivePool is IActivePool {
     uint256 public aggWeightedDebtSum;// সব user debt × interest rate এর total sum
     // total weighted debt
     // formula:
-    // debt * interestRate
+    // debt * interestRate  1000 × 5%= 50
 
     uint256 public lastAggUpdateTime; 
     // last aggregate interest update
@@ -228,37 +228,48 @@ contract ActivePool is IActivePool {
         uint256 periodStart = Math.min(lastAggBatchManagementFeesUpdateTime, periodEnd);//fee calculation কখন থেকে শুরু হবে সেটা ঠিক করা হচ্ছে
 
         return Math.ceilDiv(aggWeightedBatchManagementFeeSum * (periodEnd - periodStart), ONE_YEAR * DECIMAL_PRECISION);//How much batch management fee has accumulated over a time period. // WeightedFeeSum = 100 Time passed = 0.5 year ,,Fee = 100 × 0.5 = 50 50.0001 → becomes 51 (because of ceilDiv)
-    }//aggWeightedBatchManagementFeeSum Total system “fee power” = sum of (debt × fee rate weighting)
+    }
 
-
-    function getNewApproxAvgInterestRateFromTroveChange(TroveChange calldata _troveChange)
+//“After this trove change happens, what will be the new approximate average interest rate of the whole system?”
+    function getNewApproxAvgInterestRateFromTroveChange(TroveChange calldata _troveChange)  “If this Trove change happens, what will the new average system interest rate become?”
         external
         view
-        returns (uint256)//“After this Trove change happens,what will the new approximate average system interest rate become?”
+        returns (uint256)//predict new system average interest rate BEFORE actually applying the change
     {
         // We are ignoring the upfront fee when calculating the approx. avg. interest rate.
         // This is a simple way to resolve the circularity in:
         //   fee depends on avg. interest rate -> avg. interest rate is weighted by debt -> debt includes fee -> ...
         assert(_troveChange.upfrontFee == 0);
 
-        if (shutdownTime != 0) return 0;
+        if (shutdownTime != 0) return 0;// If shutdown already happened, stop calculation and return 0.
 
-        uint256 newAggRecordedDebt = aggRecordedDebt;
-        newAggRecordedDebt += calcPendingAggInterest();
-        newAggRecordedDebt += _troveChange.appliedRedistBoldDebtGain;
-        newAggRecordedDebt += _troveChange.debtIncrease;
-        newAggRecordedDebt += _troveChange.batchAccruedManagementFee;
-        newAggRecordedDebt -= _troveChange.debtDecrease;
 
-        uint256 newAggWeightedDebtSum = aggWeightedDebtSum;
-        newAggWeightedDebtSum += _troveChange.newWeightedRecordedDebt;
-        newAggWeightedDebtSum -= _troveChange.oldWeightedRecordedDebt;
+/*Old debt = 10,000
+
++ 100 interest
++ 50 redistributed debt
++ 500 borrowing
++ 20 fee
+- 200 repayment
+
+= 10,470*/
+
+        uint256 newAggRecordedDebt = aggRecordedDebt;//aggRecordedDebt = 10,000 BOLD
+        newAggRecordedDebt += calcPendingAggInterest(); //10,000 + 100   Because debt grows over time from interest.
+        newAggRecordedDebt += _troveChange.appliedRedistBoldDebtGain;//+50   Some liquidated trove debt got redistributed.
+        newAggRecordedDebt += _troveChange.debtIncrease;//User borrowed more: 10,150 + 500  = 10,650  User minted/borrowed 500 more BOLD.
+        newAggRecordedDebt += _troveChange.batchAccruedManagementFee;  Batch manager earned 20 BOLD fee.  10,650 + 20    = 10,670
+        newAggRecordedDebt -= _troveChange.debtDecrease; User repaid debt:  10,670 - 200    = 10,470
+
+        uint256 newAggWeightedDebtSum = aggWeightedDebtSum; Copy old value. newAggWeightedDebtSum = 1,000
+        newAggWeightedDebtSum += _troveChange.newWeightedRecordedDebt;  Add new user value: 1,000 + 180  = 1,180  Because user now has a new debt situation.
+        newAggWeightedDebtSum -= _troveChange.oldWeightedRecordedDebt;  Remove old user value: 1,180 - 100   = 1,080
 
         // Avoid division by 0 if the first ever borrower tries to borrow 0 BOLD
         // Borrowing 0 BOLD is not allowed, but our check of debt >= MIN_DEBT happens _after_ calculating the upfront
         // fee, which involves getting the new approx. avg. interest rate
-        return newAggRecordedDebt > 0 ? newAggWeightedDebtSum / newAggRecordedDebt : 0;
-    }
+        return newAggRecordedDebt > 0 ? newAggWeightedDebtSum / newAggRecordedDebt : 0; //If debt is bigger than 0 → calculate average interest rate. 1,080 / 10,470 ≈ 0.103 ≈ 10.3%
+    }//New average system interest rate = 10.3%
 
     // Returns sum of agg.recorded debt plus agg. pending interest. Excludes pending redist. gains.
     function getBoldDebt() external view returns (uint256) {
