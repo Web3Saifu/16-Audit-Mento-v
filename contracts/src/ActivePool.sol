@@ -81,7 +81,7 @@ contract ActivePool is IActivePool {
     IERC20 public immutable collToken; 
     // collateral token ex: cUSD
 
-    address public immutable borrowerOperationsAddress; 
+    address public immutable  ; 
     // BorrowerOperations contract
     // user borrow/repay entry point
 
@@ -214,7 +214,7 @@ contract ActivePool is IActivePool {
     }
 
     function calcPendingAggInterest() public view returns (uint256) { //“system কত debt + interest weight ধরে রেখেছে × কত সময় গেছে”  //“শেষ update-এর পর এখন পর্যন্ত system-এ কত interest জমেছে কিন্তু এখনও officially mint/account করা হয়নি?”
-        if (shutdownTime != 0) return 0;
+        if (shutdownTime != 0) return 0;//👉 last update-এর পর যত নতুন interest জমেছে কিন্তু এখনও officially stored হয়নি।
 
         return Math.ceilDiv(aggWeightedDebtSum * (block.timestamp - lastAggUpdateTime), ONE_YEAR * DECIMAL_PRECISION);//শেষ update এর পর এখন পর্যন্ত accrued (জমা হওয়া) system interest  //“system কত debt + interest weight ধরে রেখেছে × কত সময় গেছে”
     }
@@ -273,35 +273,35 @@ contract ActivePool is IActivePool {
 
     // Returns sum of agg.recorded debt plus agg. pending interest. Excludes pending redist. gains.
     function getBoldDebt() external view returns (uint256) {
-        return aggRecordedDebt + calcPendingAggInterest() + aggBatchManagementFees + calcPendingAggBatchManagementFee();
-    }
+        return aggRecordedDebt + calcPendingAggInterest() + aggBatchManagementFees + calcPendingAggBatchManagementFee();//100 + 10 + 2 + 1 = 113
+    }//
 
     // --- Pool functionality ---
 
-    function sendColl(address _account, uint256 _amount) external override {
-        _requireCallerIsBOorTroveMorSP();
+    function sendColl(address _account, uint256 _amount) external override {//👉 এই function ActivePool vault থেকে collateral বের করে অন্য account/contract-এ পাঠায়।  Alice wants to withdraw:
+        _requireCallerIsBOorTroveMorSP();//এই function access control guard। এটা check করে caller protocol-এর trusted contract কিনা। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD.
 
         _accountForSendColl(_amount);
 
         collToken.safeTransfer(_account, _amount);
     }
+///temporary holding area for redistributed liquidation collateral/debt
+    function sendCollToDefaultPool(uint256 _amount) external override {//👉 এই function ActivePool থেকে collateral নিয়ে DefaultPool-এ পাঠায়। Usually liquidation redistribution-এর সময় এটা হয়। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD.
+        _requireCallerIsTroveManager();//👉 only TroveManager can trigger this.
 
-    function sendCollToDefaultPool(uint256 _amount) external override {
-        _requireCallerIsTroveManager();
-
-        _accountForSendColl(_amount);
+        _accountForSendColl(_amount);//Internal Accounting Update
 
         IDefaultPool(defaultPoolAddress).receiveColl(_amount);
     }
 
-    function _accountForSendColl(uint256 _amount) internal {
-        uint256 newCollBalance = collBalance - _amount;
-        collBalance = newCollBalance;
+    function _accountForSendColl(uint256 _amount) internal {//👉 এই function collateral OUT যাওয়ার আগে protocol-এর internal accounting update করে। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD.
+        uint256 newCollBalance = collBalance - _amount;//collBalance = 110
+        collBalance = newCollBalance;//Now protocol wants to send: _amount = 10
         emit ActivePoolCollBalanceUpdated(newCollBalance);
     }
 
-    function receiveColl(uint256 _amount) external {
-        _requireCallerIsBorrowerOperationsOrDefaultPool();
+    function receiveColl(uint256 _amount) external {//👉 এই function ActivePool-এর ভিতরে collateral ঢোকায়। Same single example: Alice deposits 110 collateral and borrows 100 BOLD.
+        _requireCallerIsBorrowerOperationsOrDefaultPool();//only trusted protocol contracts allowed.
 
         _accountForReceivedColl(_amount);
 
@@ -309,7 +309,7 @@ contract ActivePool is IActivePool {
         collToken.safeTransferFrom(msg.sender, address(this), _amount);
     }
 
-    function accountForReceivedColl(uint256 _amount) public {
+    function accountForReceivedColl(uint256 _amount) public {//👉 এই function শুধু ActivePool-এর internal collateral accounting update করে। Real ERC20 token transfer এখানে হয় না। Same single example: Alice deposits 110 collateral and borrows 100 BOLD.
         _requireCallerIsBorrowerOperationsOrDefaultPool();
 
         _accountForReceivedColl(_amount);
@@ -320,7 +320,7 @@ contract ActivePool is IActivePool {
         collBalance = newCollBalance;
 
         emit ActivePoolCollBalanceUpdated(newCollBalance);
-    }
+    }//*Done
 
     // --- Aggregate interest operations ---
 
@@ -331,10 +331,10 @@ contract ActivePool is IActivePool {
     // It does *not* include the Trove's individual accrued interest - this gets accounted for in the aggregate accrued interest.
     // The net Trove debt change could be positive or negative in a repayment (depending on whether its redistribution gain or repayment amount is larger),
     // so this function accepts both the increase and the decrease to avoid using (and converting to/from) signed ints.
-    function mintAggInterestAndAccountForTroveChange(TroveChange calldata _troveChange, address _batchAddress)
+    function mintAggInterestAndAccountForTroveChange(TroveChange calldata _troveChange, address _batchAddress)//A user changed trove, now update everything in the system correctly.”
         external
     {
-        _requireCallerIsBOorTroveM();
+        _requireCallerIsBOorTroveM();//Only BorrowerOperations or TroveManager can call this function.
 
         // Batch management fees
         if (_batchAddress != address(0)) {
@@ -391,10 +391,9 @@ contract ActivePool is IActivePool {
         _mintBatchManagementFeeAndAccountForChange(_troveChange, _batchAddress);
     }
 
-    function _mintBatchManagementFeeAndAccountForChange(TroveChange memory _troveChange, address _batchAddress)
-        internal
+    function _mintBatchManagementFeeAndAccountForChange(TroveChange memory _troveChange, address _batchAddress)// 👉 এই function batch manager-এর accrued fee system debt-এ add করে, accounting update করে, তারপর real BOLD mint করে batch manager-কে দেয়। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD. Alice joined a batch manager charging management fee.
     {
-        aggRecordedDebt += _troveChange.batchAccruedManagementFee;
+        aggRecordedDebt += _troveChange.batchAccruedManagementFee;//— Add Fee Into Total System Debt  aggRecordedDebt += _troveChange.batchAccruedManagementFee; aggRecordedDebt = 100  batchAccruedManagementFee = 5
 
         // Do the arithmetic in 2 steps here to avoid underflow from the decrease
         uint256 newAggBatchManagementFees = aggBatchManagementFees; // 1 SLOAD
@@ -436,8 +435,8 @@ contract ActivePool is IActivePool {
         );
     }
 
-    function _requireCallerIsBOorTroveMorSP() internal view {
-        require(
+    function _requireCallerIsBOorTroveMorSP() internal view {//👉 এই function access control guard। এটা check করে caller protocol-এর trusted contract কিনা। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD.
+        require( // @audit haw thay validate who call this fun.
             msg.sender == borrowerOperationsAddress || msg.sender == troveManagerAddress
                 || msg.sender == address(stabilityPool),
             "ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
