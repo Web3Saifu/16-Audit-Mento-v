@@ -224,12 +224,12 @@ contract ActivePool is IActivePool {
     }//(A) calcPendingAggInterest()  পুরো system-এর এখন পর্যন্ত accrued interest
 
     function calcPendingAggBatchManagementFee() public view returns (uint256) {//batch managers-এর accrued management fee এখন পর্যন্ত কত জমেছে সেটা calculate করছে
-        uint256 periodEnd = shutdownTime != 0 ? shutdownTime : block.timestamp;//0 = default /  এখনও shutdown হয়নি (active)
+        uint256 periodEnd = shutdownTime != 0 ? shutdownTime : block.timestamp;//0 = default /  এখনও shutdown হয়নি (active)   //shutdownTime = 900  current time = 1000  ,,900 != 0 → TRUE      So:periodEnd = shutdownTime = 900 
         uint256 periodStart = Math.min(lastAggBatchManagementFeesUpdateTime, periodEnd);//fee calculation কখন থেকে শুরু হবে সেটা ঠিক করা হচ্ছে
 
         return Math.ceilDiv(aggWeightedBatchManagementFeeSum * (periodEnd - periodStart), ONE_YEAR * DECIMAL_PRECISION);//How much batch management fee has accumulated over a time period. // WeightedFeeSum = 100 Time passed = 0.5 year ,,Fee = 100 × 0.5 = 50 50.0001 → becomes 51 (because of ceilDiv)
     }
-
+ 
 //“After this trove change happens, what will be the new approximate average interest rate of the whole system?”
     function getNewApproxAvgInterestRateFromTroveChange(TroveChange calldata _troveChange)  “If this Trove change happens, what will the new average system interest rate become?”
         external
@@ -393,12 +393,12 @@ contract ActivePool is IActivePool {
 
     function _mintBatchManagementFeeAndAccountForChange(TroveChange memory _troveChange, address _batchAddress)// 👉 এই function batch manager-এর accrued fee system debt-এ add করে, accounting update করে, তারপর real BOLD mint করে batch manager-কে দেয়। Same single example: Alice deposited 110 collateral and borrowed 100 BOLD. Alice joined a batch manager charging management fee.
     {
-        aggRecordedDebt += _troveChange.batchAccruedManagementFee;//— Add Fee Into Total System Debt  aggRecordedDebt += _troveChange.batchAccruedManagementFee; aggRecordedDebt = 100  batchAccruedManagementFee = 5
+        aggRecordedDebt += _troveChange.batchAccruedManagementFee;//— Add Fee Into Total System Debt  aggRecordedDebt += _troveChange.batchAccruedManagementFee; aggRecordedDebt = 100  batchAccruedManagementFee = 5   aggRecordedDebt = 105
 
         // Do the arithmetic in 2 steps here to avoid underflow from the decrease
-        uint256 newAggBatchManagementFees = aggBatchManagementFees; // 1 SLOAD
-        newAggBatchManagementFees += calcPendingAggBatchManagementFee();
-        newAggBatchManagementFees -= _troveChange.batchAccruedManagementFee;
+        uint256 newAggBatchManagementFees = aggBatchManagementFees; // 👉 load current stored value into memory.  aggBatchManagementFees = 20
+        newAggBatchManagementFees += calcPendingAggBatchManagementFee();//Suppose pending new fee: 3   20 + 3 = 23
+        newAggBatchManagementFees -= _troveChange.batchAccruedManagementFee;// Suppose accrued fee being settled: 5 23 - 5 = 18      aggBatchManagementFees = 18;
         aggBatchManagementFees = newAggBatchManagementFees; // 1 SSTORE
 
         // Do the arithmetic in 2 steps here to avoid underflow from the decrease

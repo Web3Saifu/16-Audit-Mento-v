@@ -6,6 +6,7 @@ import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "./Interfaces/ICollSurplusPool.sol";
 import "./Interfaces/IAddressesRegistry.sol";
+//CollSurplusPool =“extra collateral waiting room”
 
 contract CollSurplusPool is ICollSurplusPool {
     using SafeERC20 for IERC20;
@@ -19,14 +20,14 @@ contract CollSurplusPool is ICollSurplusPool {
     // deposited ether tracker
     uint256 internal collBalance;
     // Collateral surplus claimable by trove owners
-    mapping(address => uint256) internal balances;
+    mapping(address => uint256) internal balances;//which user owns how much surplus collateral
 
     // --- Events ---
 
     event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress);
     event TroveManagerAddressChanged(address _newTroveManagerAddress);
 
-    event CollBalanceUpdated(address indexed _account, uint256 _newBalance);
+    event CollBalanceUpdated(address indexed _account, uint256 _newBalance);//“User’s claimable collateral balance changed.”
     event CollSent(address indexed _to, uint256 _amount);
 
     constructor(IAddressesRegistry _addressesRegistry) {
@@ -45,17 +46,17 @@ contract CollSurplusPool is ICollSurplusPool {
     }
 
     function getCollateral(address _account) external view override returns (uint256) {
-        return balances[_account];
+        return balances[_account];//specific user's claimable surplus
     }
 
     // --- Pool functionality ---
 
-    function accountSurplus(address _account, uint256 _amount) external override {
-        _requireCallerIsTroveManager();
+    function accountSurplus(address _account, uint256 _amount) external override {//👉 Only TroveManager can create surplus accounting.
+        _requireCallerIsTroveManager();//_requireCallerIsTroveManager 
 
-        uint256 newAmount = balances[_account] + _amount;
+        uint256 newAmount = balances[_account] + _amount;//Alice owns 10 surplus COLL
         balances[_account] = newAmount;
-        collBalance = collBalance + _amount;
+        collBalance = collBalance + _amount; 
 
         emit CollBalanceUpdated(_account, newAmount);
     }

@@ -9,11 +9,15 @@ import "./Interfaces/IAddressesRegistry.sol";
 import "./Interfaces/IActivePool.sol";
 
 /*
+👉 এই contract liquidation-এর পরে temporarily redistributed collateral + debt hold করে রাখে, যতক্ষণ না users তাদের trove update করে pending redistribution apply করে।
  * The Default Pool holds the Coll and Bold debt (but not Bold tokens) from liquidations that have been redistributed
  * to active troves but not yet "applied", i.e. not yet recorded on a recipient active trove's struct.
  *
  * When a trove makes an operation that applies its pending Coll and Bold debt, its pending Coll and Bold debt is moved
  * from the Default Pool to the Active Pool.
+ * 
+ * DefaultPool
+= pending redistributed collateral/debt
  */
 contract DefaultPool is IDefaultPool {
     using SafeERC20 for IERC20;
@@ -21,18 +25,18 @@ contract DefaultPool is IDefaultPool {
     string public constant NAME = "DefaultPool";
 
     IERC20 public immutable collToken;
-    address public immutable troveManagerAddress;
-    address public immutable activePoolAddress;
-    uint256 internal collBalance; // deposited Coll tracker
-    uint256 internal BoldDebt; // debt
+    address public immutable troveManagerAddress;//👉 only TroveManager can control liquidation redistribution logic.
+    address public immutable activePoolAddress;//DefaultPool sends collateral back there later.
+    uint256 internal collBalance; // deposited Coll tracker    👉 internally tracked pending redistributed collateral.
+    uint256 internal BoldDebt; // debt   👉 internally tracked pending redistributed debt.
 
-    event CollTokenAddressChanged(address _newCollTokenAddress);
-    event ActivePoolAddressChanged(address _newActivePoolAddress);
+    event CollTokenAddressChanged(address _newCollTokenAddress);//“Collateral token changed.”
+    event ActivePoolAddressChanged(address _newActivePoolAddress);//Save log when ActivePool address changes.
     event TroveManagerAddressChanged(address _newTroveManagerAddress);
     event DefaultPoolBoldDebtUpdated(uint256 _boldDebt);
     event DefaultPoolCollBalanceUpdated(uint256 _collBalance);
 
-    constructor(IAddressesRegistry _addressesRegistry) {
+    constructor(IAddressesRegistry _addressesRegistry) {//👉 fetches system contract addresses from registry.
         collToken = _addressesRegistry.collToken();
         troveManagerAddress = address(_addressesRegistry.troveManager());
         activePoolAddress = address(_addressesRegistry.activePool());
@@ -42,7 +46,7 @@ contract DefaultPool is IDefaultPool {
         emit ActivePoolAddressChanged(activePoolAddress);
 
         // Allow funds movements between Liquity contracts
-        collToken.approve(activePoolAddress, type(uint256).max);
+        collToken.approve(activePoolAddress, type(uint256).max);//DefaultPool gives unlimited approval to ActivePool
     }
 
     // --- Getters for public variables. Required by IPool interface ---
@@ -52,12 +56,12 @@ contract DefaultPool is IDefaultPool {
     *
     * Not necessarily equal to the contract's raw Coll balance - ether can be forcibly sent to contracts.
     */
-    function getCollBalance() external view override returns (uint256) {
-        return collBalance;
+    function getCollBalance() external view override returns (uint256) {//how much collateral DefaultPool internally tracks
+        return collBalance;//getCollBalance() returns 50
     }
 
-    function getBoldDebt() external view override returns (uint256) {
-        return BoldDebt;
+    function getBoldDebt() external view override returns (uint256) {//how much redistributed debt DefaultPool currently holds
+        return BoldDebt;//getBoldDebt() returns 100
     }
 
     // --- Pool functionality ---
