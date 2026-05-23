@@ -50,21 +50,36 @@ contract CollSurplusPool is ICollSurplusPool {
     }
 
     // --- Pool functionality ---
+/*Alice collateral = 110 COLL
+Alice debt = 100 BOLD
 
+👉 Alice gets liquidated → protocol tries to recover 100 COLL
+👉 but Alice actually had 110 COLL
+👉 so 10 COLL is “extra”
+
+*/
     function accountSurplus(address _account, uint256 _amount) external override {//👉 Only TroveManager can create surplus accounting.
         _requireCallerIsTroveManager();//_requireCallerIsTroveManager 
 
-        uint256 newAmount = balances[_account] + _amount;//Alice owns 10 surplus COLL
+        uint256 newAmount = balances[_account] + _amount;//🧠 Step 2: update Alice balance
         balances[_account] = newAmount;
-        collBalance = collBalance + _amount; 
+        collBalance = collBalance + _amount; // @audit informational
 
         emit CollBalanceUpdated(_account, newAmount);
     }
+/*Alice collateral = 110 COLL
+Alice debt = 100 BOLD
 
-    function claimColl(address _account) external override {
-        _requireCallerIsBorrowerOperations();
-        uint256 claimableColl = balances[_account];
-        require(claimableColl > 0, "CollSurplusPool: No collateral available to claim");
+👉 Liquidation happened
+👉 protocol only needed 100 COLL
+👉 10 COLL = surplus stored earlier in accountSurplus
+
+Now Alice wants it back → claimColl*/
+
+    function claimColl(address _account) external override {//“Alice withdraws her previously saved extra collateral from CollSurplusPool”
+        _requireCallerIsBorrowerOperations();👉 Only BorrowerOperations can trigger claim
+        uint256 claimableColl = balances[_account];//👉 Only BorrowerOperations can trigger claim
+        require(claimableColl > 0, "CollSurplusPool: No collateral available to claim");//claimableColl = 10
 
         balances[_account] = 0;
         emit CollBalanceUpdated(_account, 0);

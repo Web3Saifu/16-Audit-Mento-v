@@ -6,16 +6,16 @@ import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import "./Interfaces/IBorrowerOperations.sol";
 import "./Interfaces/IAddressesRegistry.sol";
-import "./Interfaces/ITroveManager.sol";
-import "./Interfaces/IBoldToken.sol";
-import "./Interfaces/ICollSurplusPool.sol";
-import "./Interfaces/ISortedTroves.sol";
-import "./Interfaces/ISystemParams.sol";
-import "./Dependencies/LiquityBase.sol";
-import "./Dependencies/AddRemoveManagers.sol";
-import "./Types/LatestTroveData.sol";
-import "./Types/LatestBatchData.sol";
-import "./BatchManagerOperations.sol";
+import "./Interfaces/ITroveManager.sol";//Imports trove manager interface; example: when user opens a trove, BorrowerOperations calls TroveManager to save trove data.
+import "./Interfaces/IBoldToken.sol";//Imports BOLD token interface; example: contract can mint BOLD when user borrows.
+import "./Interfaces/ICollSurplusPool.sol";//Imports collateral surplus pool interface; example: after liquidation, extra collateral can later be claimed from this pool.
+import "./Interfaces/ISortedTroves.sol";//ISortedTroves → to keep troves sorted
+import "./Interfaces/ISystemParams.sol";//Imports system parameter interface; example: contract can read values like MCR or CCR.
+import "./Dependencies/LiquityBase.sol";//LiquityBase → to reuse common helper logic
+import "./Dependencies/AddRemoveManagers.sol";//Imports manager permission logic; example: owner can allow another address to add/remove collateral.
+import "./Types/LatestTroveData.sol";//Imports trove data struct type; example: stores trove info like debt and collateral together.
+import "./Types/LatestBatchData.sol";//Imports batch data struct type; example: stores grouped trove batch information.
+import "./BatchManagerOperations.sol";//Imports helper contract for batch logic; example: batch interest-rate operations are executed through this helper contract. Alhamdulillah.
 
 contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperations {
     using SafeERC20 for IERC20;
@@ -23,19 +23,19 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
     // --- Connected contract declarations ---
 
     IERC20 internal immutable collToken;
-    ITroveManager internal troveManager;
-    address internal gasPoolAddress;
-    ICollSurplusPool internal collSurplusPool;
-    IBoldToken internal boldToken;
+    ITroveManager internal troveManager;//Stores trove data and manages trove states. Example: after opening a trove, BorrowerOperations tells troveManager to save debt and collateral info.
+    address internal gasPoolAddress;//Address holding gas compensation reserve. Example: when opening trove, small gas reserve amount is sent here.
+    ICollSurplusPool internal collSurplusPool;//Stores extra collateral users can later claim. Example: after liquidation, leftover collateral may stay here for borrower withdrawal.
+    IBoldToken internal boldToken;//The stablecoin token contract. Example: when user borrows, this contract mints BOLD tokens to the user.
     // A doubly linked list of Troves, sorted by their collateral ratios
-    ISortedTroves internal sortedTroves;
+    ISortedTroves internal sortedTroves;//Keeps troves sorted by interest rate/collateral logic using linked list structure. Example: liquidation system can quickly find risky troves from this sorted list.
     // Wrapped ETH for liquidation reserve (gas compensation)
-    IERC20Metadata internal immutable gasToken;
-    ISystemParams public immutable systemParams;
+    IERC20Metadata internal immutable gasToken;//Token used for gas compensation reserve. Example: protocol may use WETH as gas token.
+    ISystemParams public immutable systemParams;//Stores important protocol configuration values. Example: minimum collateral ratio (MCR), minimum debt, CCR all come from here.
     // Helper contract for batch management operations
-    address public batchManagerOperations;
+    address public batchManagerOperations;//Helper contract handling batch manager logic. Example: one manager can manage interest rate settings for many troves together.
 
-    bool public hasBeenShutDown;
+    bool public hasBeenShutDown;//Emergency shutdown flag. Example: if oracle fails or system becomes unsafe, protocol sets this to true and important actions stop. Alhamdulillah.
 
     /*
      * Mapping from TroveId to individual delegate for interest rate setting.
@@ -43,92 +43,92 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
      * This address then has the ability to update the borrower’s interest rate, but not change its debt or collateral.
      * Useful for instance for cold/hot wallet setups.
      */
-    mapping(uint256 => InterestIndividualDelegate) private interestIndividualDelegateOf;
+    mapping(uint256 => InterestIndividualDelegate) private interestIndividualDelegateOf;//→ Trove #1 → Helper Wallet = 0xABC  একটা Trove এর জন্য আলাদা একজন “helper” সেট করা যায়, যে শুধু interest rate change করতে পারবে।
 
     /*
      * Mapping from TroveId to granted address for interest rate setting (batch manager).
      *
      * Batch managers set the interest rate for every Trove in the batch. The interest rate is the same for all Troves in the batch.
      */
-    mapping(uint256 => address) public interestBatchManagerOf;
+    mapping(uint256 => address) public interestBatchManagerOf;//→ কোন Trove কোন Batch Manager এর ভিতরে আছে সেটা রাখে।
 
     // List of registered Interest Batch Managers
-    mapping(address => InterestBatchManager) private interestBatchManagers;
+    mapping(address => InterestBatchManager) private interestBatchManagers;//এটা protocol এর সব registered batch manager এর information রাখে।
 
     /* --- Variable container structs  ---
 
     Used to hold, return and assign variables inside a function, in order to avoid the error:
     "CompilerError: Stack too deep". */
 
-    struct OpenTroveVars {
-        ITroveManager troveManager;
-        uint256 troveId;
-        TroveChange change;
-        LatestBatchData batch;
+    struct OpenTroveVars {//OpenTroveVars = open trove করার সময় দরকারি জিনিসের bag
+        ITroveManager troveManager;//এখান থেকে trove save/update করা হবে।
+        uint256 troveId;//Trove ID = 25
+        TroveChange change;//→ Trove এ কী change হচ্ছে সেটা রাখে। +100 collateral  +50 debt
+        LatestBatchData batch;//→ batch related latest information।  Current batch interest rate = 5%
     }
 
-    struct LocalVariables_openTrove {
-        ITroveManager troveManager;
-        IActivePool activePool;
-        IBoldToken boldToken;
-        uint256 troveId;
-        uint256 price;
-        uint256 avgInterestRate;
-        uint256 entireDebt;
-        uint256 ICR;
-        uint256 newTCR;
-        bool newOracleFailureDetected;
+    struct LocalVariables_openTrove {//এটাও open trove এর সময় temporary variables রাখে।
+        ITroveManager troveManager;//→ Trove manager reference।
+        IActivePool activePool;//→ যেখানে collateral জমা থাকে।
+        IBoldToken boldToken;//borrow করলে এখান থেকে BOLD mint হবে।
+        uint256 troveId;//→ current trove ID।
+        uint256 price;//ETH = $3000
+        uint256 avgInterestRate;//→ average interest rate।Average rate = 5%
+        uint256 entireDebt;//→ total debt including fee।
+        uint256 ICR;//→ Individual Collateral Ratio।→ Individual Collateral Ratio।
+        uint256 newTCR;//→ পুরো protocol এর নতুন collateral ratio। মানে তোমার action এর পরে পুরো system কত safe।
+        bool newOracleFailureDetected;//→ oracle fail করেছে কিনা।
     }
 
-    struct LocalVariables_adjustTrove {
-        IActivePool activePool;
-        IBoldToken boldToken;
-        LatestTroveData trove;
-        uint256 price;
-        bool isBelowCriticalThreshold;
-        uint256 newICR;
-        uint256 newDebt;
-        uint256 newColl;
-        bool newOracleFailureDetected;
+    struct LocalVariables_adjustTrove {//এটা _adjustTrove() function এর temporary working memory।  Trove adjust করার সময় দরকারি সব temporary data এখানে রাখা হয়।
+        IActivePool activePool;//→ collateral যেখানে রাখা হয় সেই pool।
+        IBoldToken boldToken;//borrow করলে এখান থেকে BOLD mint হবে।
+        LatestTroveData trove;//→ current trove এর latest information। Current debt = 100   Current collateral = 300
+        uint256 price;//→ oracle থেকে current collateral price। ETH price = $3000
+        bool isBelowCriticalThreshold;//→ protocol dangerous mode এ গেছে কিনা।  System collateral খুব কমে গেলে = true
+        uint256 newICR;// → adjustment এর পরে নতুন ICR।  $300 coll / $100 debt = 300%   Borrow আরো 50 করলে:  $300 / $150 = 200%  এই নতুন ratio হলো newICR।
+        uint256 newDebt;//→ adjustment এর পরে total debt। Old debt = 100  Borrow = 20  New debt = 120
+        uint256 newColl;//  → adjustment এর পরে total collateral। Old collateral = 5 ETH  Withdraw = 1 ETH   New collateral = 4 ETH
+        bool newOracleFailureDetected;// → oracle fail detect হয়েছে কিনা।
     }
 
-    error IsShutDown();
-    error TCRNotBelowSCR();
-    error ZeroAdjustment();
-    error NotOwnerNorInterestManager();
-    error TroveInBatch();
-    error TroveNotInBatch();
-    error InterestNotInRange();
-    error BatchInterestRateChangePeriodNotPassed();
-    error DelegateInterestRateChangePeriodNotPassed();
-    error TroveExists();
-    error TroveNotOpen();
-    error TroveNotActive();
-    error TroveNotZombie();
-    error TroveWithZeroDebt();
-    error UpfrontFeeTooHigh();
-    error ICRBelowMCR();
-    error ICRBelowMCRPlusBCR();
-    error RepaymentNotMatchingCollWithdrawal();
-    error TCRBelowCCR();
-    error DebtBelowMin();
-    error CollWithdrawalTooHigh();
-    error NotEnoughBoldBalance();
-    error InterestRateTooLow();
-    error InterestRateTooHigh();
-    error InterestRateNotNew();
-    error InvalidInterestBatchManager();
-    error BatchManagerExists();
-    error BatchManagerNotNew();
-    error NewFeeNotLower();
-    error CallerNotTroveManager();
-    error CallerNotPriceFeed();
-    error CallerNotSelf();
-    error MinGeMax();
-    error AnnualManagementFeeTooHigh();
-    error MinInterestRateChangePeriodTooLow();
-    error NewOracleFailureDetected();
-    error BatchSharesRatioTooLow();
+    error IsShutDown();//Shutdown mode এ borrowing বন্ধ।
+    error TCRNotBelowSCR();//→ System collateral ratio এখনও খুব dangerous level এ যায়নি।
+    error ZeroAdjustment();//→ কিছুই change করা হয়নি।
+    error NotOwnerNorInterestManager();//→ Caller owner না, interest manager ও না।
+    error TroveInBatch();//→ Trove already batch এর ভিতরে আছে।
+    error TroveNotInBatch();//→ Trove কোনো batch এ নেই।
+    error InterestNotInRange();//→ Interest rate allowed range এর বাইরে।
+    error BatchInterestRateChangePeriodNotPassed();//→ Batch manager খুব তাড়াতাড়ি আবার rate change করতে চাচ্ছে।
+    error DelegateInterestRateChangePeriodNotPassed();//→ Delegate খুব তাড়াতাড়ি আবার rate change করছে।
+    error TroveExists();//→ Trove already exists।
+    error TroveNotOpen();//→ Trove open অবস্থায় নেই।
+    error TroveNotActive();//→ Trove active না।
+    error TroveNotZombie();//→ Trove zombie state এ নেই।
+    error TroveWithZeroDebt();//→ Trove এর debt = 0।
+    error UpfrontFeeTooHigh();//→ upfront fee user allowed limit এর চেয়ে বেশি।
+    error ICRBelowMCR();//→ Individual collateral ratio খুব কম।   Required = 110%   Current = 90%
+    error ICRBelowMCRPlusBCR();///→ Batch trove এর collateral ratio safe level এর নিচে।
+    error RepaymentNotMatchingCollWithdrawal();//→ যথেষ্ট debt repay না করে collateral withdraw করা হচ্ছে।
+    error TCRBelowCCR();///→ পুরো protocol এর collateral ratio unsafe হয়ে যাবে।
+    error DebtBelowMin();// → Debt minimum required amount এর নিচে।  Minimum debt = 2000   Current debt = 500
+    error CollWithdrawalTooHigh();//  → যত collateral আছে তার চেয়ে বেশি withdraw।
+    error NotEnoughBoldBalance();// → User এর কাছে repay করার মতো enough BOLD নেই।
+    error InterestRateTooLow();//→ Interest rate খুব কম।
+    error InterestRateTooHigh();//→ Interest rate খুব বেশি।
+    error InterestRateNotNew();//→ পুরানো rate আবার same rate set করা হয়েছে।
+    error InvalidInterestBatchManager();//→ Batch manager valid না।
+    error BatchManagerExists();//→ Batch manager already registered।
+    error BatchManagerNotNew();//→ পুরানো same batch manager আবার set করা হচ্ছে।
+    error NewFeeNotLower();//→ নতুন fee আগের fee থেকে কম না।
+    error CallerNotTroveManager();//→ Caller troveManager contract না।
+    error CallerNotPriceFeed();//→ → Caller priceFeed contract না।
+    error CallerNotSelf();//→ Contract নিজে function call করেনি।
+    error MinGeMax();//→→ Min value >= Max value। Min = 10   Max = 5
+    error AnnualManagementFeeTooHigh();//→ → Management fee খুব বেশি।
+    error MinInterestRateChangePeriodTooLow();// Interest rate change cooldown খুব কম।
+    error NewOracleFailureDetected();//
+    error BatchSharesRatioTooLow();// → Batch share ratio খুব কম হয়ে গেছে। Alhamdulillah.
 
     event TroveManagerAddressChanged(address _newTroveManagerAddress);
     event GasPoolAddressChanged(address _gasPoolAddress);
@@ -139,146 +139,145 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
     event ShutDown(uint256 _tcr);
 
     constructor(IAddressesRegistry _addressesRegistry, ISystemParams _systemParams)
-        AddRemoveManagers(_addressesRegistry)
-        LiquityBase(_addressesRegistry)
+        AddRemoveManagers(_addressesRegistry)  //
+        LiquityBase(_addressesRegistry)//_applyShutdown/
     {
         // This makes impossible to open a trove with zero withdrawn Bold
-        assert(_systemParams.MIN_DEBT() > 0);
+        assert(_systemParams.MIN_DEBT() > 0);// Check করছে MIN_DEBT zero না।
 
-        systemParams = _systemParams;
+        systemParams = _systemParams;//System parameter contract save করছে।
 
-        collToken = _addressesRegistry.collToken();
+        collToken = _addressesRegistry.collToken();//Collateral token address নিচ্ছে। Example: WETH token।
 
-        gasToken = _addressesRegistry.gasToken();
+        gasToken = _addressesRegistry.gasToken();//Gas compensation token নিচ্ছে।
 
-        troveManager = _addressesRegistry.troveManager();
-        gasPoolAddress = _addressesRegistry.gasPoolAddress();
-        collSurplusPool = _addressesRegistry.collSurplusPool();
-        sortedTroves = _addressesRegistry.sortedTroves();
-        boldToken = _addressesRegistry.boldToken();
+        troveManager = _addressesRegistry.troveManager();//TroveManager contract address নিচ্ছে।
+        gasPoolAddress = _addressesRegistry.gasPoolAddress();//
+        collSurplusPool = _addressesRegistry.collSurplusPool();//
+        sortedTroves = _addressesRegistry.sortedTroves();//
+        boldToken = _addressesRegistry.boldToken();//
         // We can leave the deployment script as-is by just having BorrowerOperations deploy its
         // own batchManagerOperations contract
         // /!\ If we have to redeploy a BorrowerOps that could need the same batchManagerOps then we
         // would replace this line with some extra param, but that seems unlikely
-        batchManagerOperations = address(new BatchManagerOperations(_addressesRegistry, _systemParams));
+        batchManagerOperations = address(new BatchManagerOperations(_addressesRegistry, _systemParams));//BorrowerOperations deploys a new BatchManagerOperations contract and stores its address.    BatchManagerOperations x =    new BatchManagerOperations(...);
 
-        emit TroveManagerAddressChanged(address(troveManager));
-        emit GasPoolAddressChanged(gasPoolAddress);
-        emit CollSurplusPoolAddressChanged(address(collSurplusPool));
-        emit SortedTrovesAddressChanged(address(sortedTroves));
-        emit BoldTokenAddressChanged(address(boldToken));
+        emit TroveManagerAddressChanged(address(troveManager));//
+        emit GasPoolAddressChanged(gasPoolAddress);//
+        emit CollSurplusPoolAddressChanged(address(collSurplusPool));//
+        emit SortedTrovesAddressChanged(address(sortedTroves));//
+        emit BoldTokenAddressChanged(address(boldToken));//
 
         // Allow funds movements between Liquity contracts
-        collToken.approve(address(activePool), type(uint256).max);
+        collToken.approve(address(activePool), type(uint256).max);//
     }
 
-    function CCR() external view override returns (uint256) {
+    function CCR() external view override returns (uint256) {//যদি CCR = 150% হয়, তাহলে পুরো protocol safe থাকতে total collateral ratio কমপক্ষে 150% থাকতে হবে।
         return systemParams.CCR();
     }
 
-    function MCR() external view override returns (uint256) {
+    function MCR() external view override returns (uint256) {//যদি MCR = 110% হয়, তাহলে একটি trove এর collateral ratio 110% এর নিচে গেলে liquidation হতে পারে।
         return systemParams.MCR();
     }
 
     // --- Borrower Trove Operations ---
 
-    function openTrove(
-        address _owner,
-        uint256 _ownerIndex,
-        uint256 _collAmount,
-        uint256 _boldAmount,
-        uint256 _upperHint,
-        uint256 _lowerHint,
-        uint256 _annualInterestRate,
-        uint256 _maxUpfrontFee,
-        address _addManager,
-        address _removeManager,
-        address _receiver
-    ) external override returns (uint256) {
-        _requireValidAnnualInterestRate(_annualInterestRate);
+    function openTrove(//এটা user এর নতুন Trove create করে।
+        address _owner,//Trove এর আসল owner কে হবে।
+        uint256 _ownerIndex,// Same owner এর multiple trove uniquely identify করার helper value।
+        uint256 _collAmount,//10 ETH
+        uint256 _boldAmount,//5000 BOLD
+        uint256 _upperHint,//SortedTroves list এ fast position খুঁজতে সাহায্য করে।
+        uint256 _lowerHint,//are used for gas optimization in SortedTroves.
+        uint256 _annualInterestRate,//5%
+        uint256 _maxUpfrontFee,//User maximum কত upfront fee accept করবে।  “fee 50 BOLD এর বেশি হলে transaction cancel।”
+        address _addManager,//এই address collateral add করতে বা debt repay করতে পারবে।
+        address _removeManager,// এটা বেশি powerful permission। এই address collateral withdraw করতে বা new debt নিতে পারবে।
+        address _receiver// তোমার another wallet address। মানে removeManager collateral withdraw করলে token এই receiver address এ যাবে। 
+    ) external override returns (uint256) {// returned trove ID = 8451 Example: user frontend থেকে trove open করছে। returns (uint256) → শেষে trove ID return করবে।
+        _requireValidAnnualInterestRate(_annualInterestRate);//5% allowed range এর মধ্যে আছে কিনা।
 
-        OpenTroveVars memory vars;
+        OpenTroveVars memory vars;//Temporary variables রাখার জন্য memory struct তৈরি করছে।
 
-        vars.troveId = _openTrove(
-            _owner,
-            _ownerIndex,
-            _collAmount,
-            _boldAmount,
-            _annualInterestRate,
-            address(0),
-            0,
-            0,
-            _maxUpfrontFee,
-            _addManager,
-            _removeManager,
-            _receiver,
-            vars.change
+        vars.troveId = _openTrove(//
+            _owner,//
+            _ownerIndex,//
+            _collAmount,//
+            _boldAmount,//
+            _annualInterestRate,//
+            address(0),//
+            0,//Batch related debt/fee values।
+            0,//কারণ batch use হচ্ছে না, তাই 0 দেওয়া হয়েছে।
+            _maxUpfrontFee,//User maximum কত upfront fee accept করবে।
+            _addManager,//এই address তোমার trove এ collateral add করতে বা debt repay করতে পারবে।
+            _removeManager,//এই address collateral withdraw করতে বা নতুন debt নিতে পারবে।  এটা powerful permission।
+            _receiver,//Withdraw করা collateral বা borrowed BOLD কোথায় যাবে।
+            vars.change//  trove এ কী কী change হচ্ছে সেগুলো এখানে temporarily save হয়।
         );
 
         // Set the stored Trove properties and mint the NFT
-        troveManager.onOpenTrove(_owner, vars.troveId, vars.change, _annualInterestRate);
+        troveManager.onOpenTrove(_owner, vars.troveId, vars.change, _annualInterestRate);//  এখন TroveManager permanently trove data save করছে।
 
-        sortedTroves.insert(vars.troveId, _annualInterestRate, _upperHint, _lowerHint);
+        sortedTroves.insert(vars.troveId, _annualInterestRate, _upperHint, _lowerHint);//যখন নতুন trove insert/reinsert হয়, protocol-কে sorted list-এ correct position খুঁজতে হয় (interest rate বা collateral ratio অনুযায়ী)।
 
-        return vars.troveId;
+        return vars.troveId;//শেষে unique trove ID return করছে।
     }
 
-    function openTroveAndJoinInterestBatchManager(OpenTroveAndJoinInterestBatchManagerParams calldata _params)
+    function openTroveAndJoinInterestBatchManager(OpenTroveAndJoinInterestBatchManagerParams calldata _params)//এই function নতুন trove open করে এবং একই সাথে একটা Interest Batch Manager এর batch এ join করায়।
         external
         override
         returns (uint256)
     {
-        _requireValidInterestBatchManager(_params.interestBatchManager);
+        _requireValidInterestBatchManager(_params.interestBatchManager);//registered manager কিনা।
 
-        OpenTroveVars memory vars;
-        vars.troveManager = troveManager;
+        OpenTroveVars memory vars;//OpenTroveVars type-এর একটি temporary variable vars create করা।
+        vfars.troveManager = troveManager;//contract-এর storage variable troveManager কে vars.troveManager এ copy করো।
 
-        vars.batch = vars.troveManager.getLatestBatchData(_params.interestBatchManager);
-
+        vars.batch = vars.troveManager.getLatestBatchData(_params.interestBatchManager);//"এই batch manager (0xABC) এর latest batch data দাও"
         // We set old weighted values here, as it’s only necessary for batches, so we don’t need to pass them to _openTrove func
-        vars.change.batchAccruedManagementFee = vars.batch.accruedManagementFee;
-        vars.change.oldWeightedRecordedDebt = vars.batch.weightedRecordedDebt;
-        vars.change.oldWeightedRecordedBatchManagementFee = vars.batch.weightedRecordedBatchManagementFee;
-        vars.troveId = _openTrove(
-            _params.owner,
-            _params.ownerIndex,
-            _params.collAmount,
-            _params.boldAmount,
-            vars.batch.annualInterestRate,
-            _params.interestBatchManager,
-            vars.batch.entireDebtWithoutRedistribution,
-            vars.batch.annualManagementFee,
-            _params.maxUpfrontFee,
-            _params.addManager,
-            _params.removeManager,
-            _params.receiver,
-            vars.change
+        vars.change.batchAccruedManagementFee = vars.batch.accruedManagementFee;//Batch এ আগে থেকে যত management fee accumulated হয়েছে সেটা save করছে। ধরো batch already 200 BOLD management fee earn করেছে।
+        vars.change.oldWeightedRecordedDebt = vars.batch.weightedRecordedDebt;// batch এ আগে কত debt ছিল এবং কোন interest rate এ ছিল সেটা tracking করার value।   এখন নতুন trove add হওয়ার আগে old value save করছে।
+        vars.change.oldWeightedRecordedBatchManagementFee = vars.batch.weightedRecordedBatchManagementFee;//Batch এর পুরানো weighted management fee value save করছে।   management fee calculation এর previous state।
+        vars.troveId = _openTrove(//এখন actual trove create হচ্ছে।
+            _params.owner,//তোমার wallet।
+            _params.ownerIndex,//Unique trove ID generate করার helper value।  vতোমার দ্বিতীয় trove হলে index = 1
+            _params.collAmount,/// 10 ETH
+            _params.boldAmount,//5000 BOLD 
+            vars.batch.annualInterestRate,//Batch এর shared interest rate।batch interest = 5%   batch interest = 5%   এই trove এর own custom interest rate নেই।
+            _params.interestBatchManager,//কোন batch manager এর batch এ join করবে।
+            vars.batch.entireDebtWithoutRedistribution,// 
+            vars.batch.annualManagementFee,//
+            _params.maxUpfrontFee,//
+            _params.addManager,//
+            _params.removeManager,//
+            _params.receiver,//
+            vars.change//
         );
 
-        interestBatchManagerOf[vars.troveId] = _params.interestBatchManager;
+        interestBatchManagerOf[vars.troveId] = _params.interestBatchManager;//
 
         // Set the stored Trove properties and mint the NFT
-        vars.troveManager.onOpenTroveAndJoinBatch(
-            _params.owner,
-            vars.troveId,
-            vars.change,
-            _params.interestBatchManager,
-            vars.batch.entireCollWithoutRedistribution,
-            vars.batch.entireDebtWithoutRedistribution
+        vars.troveManager.onOpenTroveAndJoinBatch(//
+            _params.owner,//
+            vars.troveId,//
+            vars.change,//
+            _params.interestBatchManager,//
+            vars.batch.entireCollWithoutRedistribution,//
+            vars.batch.entireDebtWithoutRedistribution//
         );
 
-        sortedTroves.insertIntoBatch(
-            vars.troveId,
-            BatchId.wrap(_params.interestBatchManager),
-            vars.batch.annualInterestRate,
-            _params.upperHint,
-            _params.lowerHint
-        );
+        sortedTroves.insertIntoBatch(//
+            vars.troveId,//
+            BatchId.wrap(_params.interestBatchManager),//
+            vars.batch.annualInterestRate,//
+            _params.upperHint,//
+            _params.lowerHint//
+        );//
 
-        return vars.troveId;
+        return vars.troveId;//
     }
 
-    function _openTrove(
+    function _openTrove(//
         address _owner,
         uint256 _ownerIndex,
         uint256 _collAmount,
@@ -298,11 +297,11 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
         LocalVariables_openTrove memory vars;
 
         // stack too deep not allowing to reuse troveManager from outer functions
-        vars.troveManager = troveManager;
+        vars.troveManager = troveManager;//contract-এর storage variable troveManager কে vars.troveManager এ copy করো।
         vars.activePool = activePool;
         vars.boldToken = boldToken;
 
-        vars.price = priceFeed.fetchPrice();
+        vars.price = priceFeed.fetchPrice();//Oracle/price feed থেকে latest collateral price আনো।  
 
         // --- Checks ---
 
@@ -1298,14 +1297,14 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
         }
     }
 
-    function _requireValidAnnualInterestRate(uint256 _annualInterestRate) internal view {
-        if (_annualInterestRate < systemParams.MIN_ANNUAL_INTEREST_RATE()) {
+    function _requireValidAnnualInterestRate(uint256 _annualInterestRate) internal view { //“Make sure user-provided interest rate is not too low and not too high.”
+        if (_annualInterestRate < systemParams.MIN_ANNUAL_INTEREST_RATE()) {//
             revert InterestRateTooLow();
         }
-        if (_annualInterestRate > MAX_ANNUAL_INTEREST_RATE) {
+        if (_annualInterestRate > MAX_ANNUAL_INTEREST_RATE) {//
             revert InterestRateTooHigh();
         }
-    }
+    }//*Done
 
     function _requireAnnualInterestRateIsNew(uint256 _oldAnnualInterestRate, uint256 _newAnnualInterestRate)
         internal
@@ -1349,11 +1348,11 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
         }
     }
 
-    function _requireValidInterestBatchManager(address _interestBatchManagerAddress) internal view {
+    function _requireValidInterestBatchManager(address _interestBatchManagerAddress) internal view { //“Batch manager valid/registered কিনা check করা”
         if (interestBatchManagers[_interestBatchManagerAddress].maxInterestRate == 0) {
             revert InvalidInterestBatchManager();
         }
-    }
+    }//*Done
 
     function _requireNonExistentInterestBatchManager(address _interestBatchManagerAddress) internal view {
         if (interestBatchManagers[_interestBatchManagerAddress].maxInterestRate > 0) {
