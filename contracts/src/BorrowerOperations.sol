@@ -245,23 +245,23 @@ contract BorrowerOperations is LiquityBase, AddRemoveManagers, IBorrowerOperatio
             _params.boldAmount,//5000 BOLD 
             vars.batch.annualInterestRate,//Batch এর shared interest rate।batch interest = 5%   batch interest = 5%   এই trove এর own custom interest rate নেই।
             _params.interestBatchManager,//কোন batch manager এর batch এ join করবে।
-            vars.batch.entireDebtWithoutRedistribution,// 
-            vars.batch.annualManagementFee,//
-            _params.maxUpfrontFee,//
-            _params.addManager,//
-            _params.removeManager,//
-            _params.receiver,//
-            vars.change//
-        );
+            vars.batch.entireDebtWithoutRedistribution,//  Batch এর current total debt।  নতুন trove add হওয়ার আগে batch এ already কত debt আছে।
+            vars.batch.annualManagementFee,//Batch manager yearly management fee। 1%
+            _params.maxUpfrontFee,//“ Maximum upfront fee user accept করবে। 100 BOLD এর বেশি fee হলে revert।”
+            _params.addManager,//Collateral add / repay করার permission address।
+            _params.removeManager,//Withdraw / borrow করার permission address।
+            _params.receiver,//Withdraw করা token কোথায় যাবে।
+            vars.change//সব trove change data store করার struct।
+        ); 
 
-        interestBatchManagerOf[vars.troveId] = _params.interestBatchManager;//
+        interestBatchManagerOf[vars.troveId] = _params.interestBatchManager;//এখানে protocol save করে রাখে যে এই trove কোন batch manager-এর under এ আছে।  তোমার troveId = 15     আর batch manager = 0xABC    trove 15 -> manager 0xABC
 
         // Set the stored Trove properties and mint the NFT
-        vars.troveManager.onOpenTroveAndJoinBatch(//
-            _params.owner,//
-            vars.troveId,//
-            vars.change,//
-            _params.interestBatchManager,//
+        vars.troveManager.onOpenTroveAndJoinBatch(//এটা TroveManager-কে inform করে যে:
+            _params.owner,//= trove owner address। Example: তোমার wallet।
+            vars.troveId,// = নতুন trove এর ID।  Example: 15
+            vars.change,//= trove open করার সময় collateral/debt/fee related changed data।  collateral added = 100 USDC    debt added = 50 BOLD
+            _params.interestBatchManager,//= কোন batch manager-এর batch এ join করছে। Example: 0xABC
             vars.batch.entireCollWithoutRedistribution,//
             vars.batch.entireDebtWithoutRedistribution//
         );
