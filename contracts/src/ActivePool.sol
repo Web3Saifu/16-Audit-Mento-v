@@ -442,6 +442,7 @@ contract ActivePool is IActivePool {
             "ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
         );
     }
+    
 
     function _requireCallerIsBOorSP() internal view {
         require(
