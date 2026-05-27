@@ -458,6 +458,7 @@ contract ActivePool is IActivePool {
         );
     }
 
+
     function _requireCallerIsTroveManager() internal view {
         require(msg.sender == troveManagerAddress, "ActivePool: Caller is not TroveManager");
     }
